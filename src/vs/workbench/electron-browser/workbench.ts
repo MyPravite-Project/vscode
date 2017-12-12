@@ -21,7 +21,7 @@ import errors = require('vs/base/common/errors');
 import { BackupFileService } from 'vs/workbench/services/backup/node/backupFileService';
 import { IBackupFileService } from 'vs/workbench/services/backup/common/backup';
 import { Registry } from 'vs/platform/registry/common/platform';
-import { isWindows, isLinux, isMacintosh } from 'vs/base/common/platform';
+import { isWindows, isLinux, isMacintosh, isRootUser } from 'vs/base/common/platform';
 import { Position as EditorPosition, IResourceDiffInput, IUntitledResourceInput, IEditor, IResourceInput } from 'vs/platform/editor/common/editor';
 import { IWorkbenchContributionsRegistry, Extensions as WorkbenchExtensions } from 'vs/workbench/common/contributions';
 import { IEditorInputFactoryRegistry, Extensions as EditorExtensions } from 'vs/workbench/common/editor';
@@ -40,6 +40,8 @@ import { getServices } from 'vs/platform/instantiation/common/extensions';
 import { Position, Parts, IPartService, ILayoutOptions, Dimension } from 'vs/workbench/services/part/common/partService';
 import { IWorkspaceContextService, WorkbenchState } from 'vs/platform/workspace/common/workspace';
 import { IStorageService, StorageScope } from 'vs/platform/storage/common/storage';
+import { IntegrityServiceImpl } from 'vs/platform/integrity/node/integrityServiceImpl';
+import { IIntegrityService } from 'vs/platform/integrity/common/integrity';
 import { ContextMenuService } from 'vs/workbench/services/contextview/electron-browser/contextmenuService';
 import { WorkbenchKeybindingService } from 'vs/workbench/services/keybinding/electron-browser/keybindingService';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
@@ -512,6 +514,10 @@ export class Workbench implements IPartService {
 		// Services we contribute
 		serviceCollection.set(IPartService, this);
 
+		// Integrity
+		const integrityService = this.instantiationService.createInstance(IntegrityServiceImpl);
+		serviceCollection.set(IIntegrityService, integrityService);
+
 		// Clipboard
 		serviceCollection.set(IClipboardService, new ClipboardService());
 
@@ -574,6 +580,17 @@ export class Workbench implements IPartService {
 		this.titlebarPart = this.instantiationService.createInstance(TitlebarPart, Identifiers.TITLEBAR_PART);
 		this.toUnbind.push({ dispose: () => this.titlebarPart.shutdown() });
 		serviceCollection.set(ITitleService, this.titlebarPart);
+		integrityService.isPure().then(res => this.titlebarPart.updateProperties({ isPure: res.isPure }));
+		this.lifecycleService.when(LifecyclePhase.Running).then(() => {
+			let isAdminPromise: Promise<boolean>;
+			if (isWindows) {
+				isAdminPromise = import('native-is-elevated').then(isElevated => isElevated());
+			} else {
+				isAdminPromise = Promise.resolve(isRootUser);
+			}
+
+			return isAdminPromise.then(isAdmin => this.titlebarPart.updateProperties({ isAdmin }));
+		});
 
 		// History
 		serviceCollection.set(IHistoryService, new SyncDescriptor(HistoryService));
